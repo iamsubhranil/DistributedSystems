@@ -1,4 +1,3 @@
-
 def validate_input(num_nodes, neighbours, init):
     """
     Validates all the inputs to be in range
