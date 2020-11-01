@@ -114,7 +114,7 @@ def check_reachability(neighbours, init):
         # from the neighbours of present node, extend the queue with
         # such nodes which are not yet visited, and not yet in the queue
         queue.extend(x for x in neighbours[pending] if not visited[x] and x not in queue)
-    return all(visited)
+    return [all(visited), init]
 
 def main():
     if len(sys.argv) == 1:
@@ -130,7 +130,7 @@ def main():
     init = node_to_idx(input("Enter the possible initiator: "))
     if not validate_initiator(num_nodes, init):
         return
-    if check_reachability(neighbours, init):
+    if check_reachability(neighbours, init)[0]:
         print("Node %d can be an initiator!" % (init + 1))
     else:
         print("Node %d cannot be an initator!" % (init + 1))
