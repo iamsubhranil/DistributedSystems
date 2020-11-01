@@ -1,4 +1,4 @@
-def validate_input(num_nodes, neighbours, init):
+def validate_input(num_nodes, neighbours):
     """
     Validates all the inputs to be in range
     num_nodes: total number of nodes in the network
@@ -10,7 +10,23 @@ def validate_input(num_nodes, neighbours, init):
             if j >= num_nodes or j < 0:
                 print("[Error] Invalid node %d!" % (j + 1))
                 return False
+    return True
 
+def validate_initiator(num_nodes, init):
+    """
+    Validates the initiator to be in range
+    Parameters
+    ----------
+    init : integer
+        The probable initiator node.
+    num_nodes: integer
+        Total number of nodes in the network.
+    Returns
+    -------
+    bool
+        True if init is valid initiator, false otherwise.
+
+    """
     if init >= num_nodes or init < 0:
         print("[Error] Invalid initiator %d!" % (init + 1))
         return False
@@ -63,9 +79,8 @@ def load_data_from_stdin():
         n = list(map(node_to_idx, n))
         # add the neighbour list of this node to the network
         neighbours.append(n)
-    # the initiator
-    init = node_to_idx(input("Enter the possible initiator: "))
-    return (num_nodes, neighbours, init)
+
+    return (num_nodes, neighbours)
 
 def load_data_from_file(file):
     """
@@ -79,8 +94,8 @@ def load_data_from_file(file):
         for i in range(num_nodes):
             n = list(map(node_to_idx, f.readline().strip().split(" ")))
             neighbours.append(n)
-        init = node_to_idx(input("Enter the possible initiator: "))
-        return (num_nodes, neighbours, init)
+
+        return (num_nodes, neighbours)
     print("[Error] Unable to read file!")
     return None
 
@@ -110,7 +125,11 @@ def main():
         return
     if not validate_input(*res):
         return
-    num_nodes, neighbours, init = res
+    num_nodes, neighbours = res
+    # the initiator
+    init = node_to_idx(input("Enter the possible initiator: "))
+    if not validate_initiator(num_nodes, init):
+        return
     if check_reachability(neighbours, init):
         print("Node %d can be an initiator!" % (init + 1))
     else:
