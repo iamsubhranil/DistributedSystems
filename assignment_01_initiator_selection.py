@@ -107,13 +107,17 @@ def check_reachability(neighbours, init):
     of all other nodes from the given initiator.
     """
     visited = [False] * len(neighbours)
-    queue = list(neighbours[init])
-    visited[init] = True
+    queued = [False] * len(neighbours)
+    queue = [init]
+    queued[init] = True
     for pending in queue:
         visited[pending] = True
         # from the neighbours of present node, extend the queue with
         # such nodes which are not yet visited, and not yet in the queue
-        queue.extend(x for x in neighbours[pending] if not visited[x] and x not in queue)
+        for x in neighbours[pending]:
+            if not visited[x] and not queued[x]:
+                queue.append(x)
+                queued[x] = True
     return [all(visited), init]
 
 def main():
