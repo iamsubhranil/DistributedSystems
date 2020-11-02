@@ -9,8 +9,6 @@ import time
 import concurrent.futures
 import assignment_01_initiator_selection as initiator
 
-start = time.perf_counter()
-
 def main():
     if len(sys.argv) == 1:
         res = initiator.load_data_from_stdin()
@@ -40,6 +38,7 @@ def main():
 
 
 if __name__ == "__main__":
+    start = time.perf_counter()
     main()
     finish = time.perf_counter()
     print(f'Finished in {round(finish-start, 2)} seconds')
