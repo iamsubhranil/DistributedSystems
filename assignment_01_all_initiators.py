@@ -2,7 +2,7 @@
 """
 Created on Mon Nov  2 00:29:00 2020
 
-@author: Anubhab
+@author: Subhranil and Anubhab
 """
 import sys
 import time
