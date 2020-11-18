@@ -4,9 +4,9 @@ import random
 from itertools import repeat
 
 
-def generate_timestamp(ts_counter):
-    ts_counter.set(ts_counter.value + 1)
-    return ts_counter.value
+def generate_timestamp(ts):
+    ts.set(ts.value + 1)
+    return ts.value
 
 
 SLEEP_TIME = 2
@@ -24,10 +24,10 @@ class Node:
         self.request_queue = manager.Queue()
         self.id_ = id_
         self.neighbors = n
-        self.ts_counter = manager.Value('i', 0)
+        #self.ts_counter = manager.Value('i', 0)
 
-    def tick(self, max_requests):  # main event loop
-        while self.ts_counter.value < max_requests:
+    def tick(self, max_ts):  # main event loop
+        while self.ts.value < max_ts:
             sleep(random.random())
             sleep(random.random())
             sleep(random.random())
@@ -38,7 +38,7 @@ class Node:
     def request(self):
         with self.status_lock:
             self.status.set(1)  # set the status
-        self.ts.set(generate_timestamp(self.ts_counter))  # get a timestamp
+        self.ts.set(generate_timestamp(self.ts))  # get a timestamp
         for neighbor in self.neighbors:  # ask for all tokens at once
             if neighbor == self:  # skip self
                 continue
@@ -68,16 +68,18 @@ class Node:
             elif self.status.value == 1 and self.ts.value > ts.value:
                 # if we are busy, we grant only when we are newer
                 sem.release()
-            elif self.status.value == 1 and self.ts.value == ts.value and self.id_ > id_ :
+            #elif self.status.value == 1 and self.ts.value == ts.value and self.id_ > id_ :
                 # if we are busy and request comes from node with same
                 # timestamp, then we grant only if they have smaller id value
                 # this is tie-breaking condition which might be unfair
-                print(self.id_, id_)
-                sem.release()
+                # print(self.id_, id_)
+                # sem.release()
             else:  # either we're in cs or requesting with a lower ts
                 # we put the sem in a queue to be unlocked when
                 # we exit from the cs
                 self.request_queue.put_nowait(sem)
+            if self.ts.value <= ts.value:
+                self.ts.set(ts.value+1)
 
     def get_status(self):
         return (self.status.value, self.ts.value)
@@ -89,15 +91,15 @@ def print_status(neighbors):
         i = 0
         for neighbor in neighbors:
             stat = neighbor.get_status()
-            print("Node %d: %s (timestamp: %d,%d)" %
-                  (i, STATUS_TEXT[stat[0]], stat[1], i))
+            print("Node %d: %s (timestamp: %d)" %
+                  (i, STATUS_TEXT[stat[0]], stat[1]))
             i += 1
         print()
         sleep(UPDATE_TIME)
 
 
-def start_tick(neighbors, node, max_requests):
-    neighbors[node].tick(max_requests)
+def start_tick(neighbors, node, max_ts):
+    neighbors[node].tick(max_ts)
 
 
 def main():
@@ -116,14 +118,14 @@ def main():
     for i in range(num_nodes):
         neighbors.append(Node(manager, i, neighbors, ts_counter))
 
-    max_requests = num_nodes*3
+    max_ts = num_nodes*3
     printer = Process(target=print_status, args=(neighbors,), daemon=True)
     printer.start()
 
 
 
     jobPool = Pool(processes=len(neighbors))
-    jobPool.starmap(start_tick, zip(repeat(neighbors), range(len(neighbors)), repeat(max_requests)))
+    jobPool.starmap(start_tick, zip(repeat(neighbors), range(len(neighbors)), repeat(max_ts)))
 
 
 if __name__ == "__main__":
