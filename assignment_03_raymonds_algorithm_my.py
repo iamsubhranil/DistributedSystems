@@ -13,7 +13,7 @@ SLEEP_TIME = 0.5
 UPDATE_TIME = 0.3
 
 FREE = 0
-WAITING = 1
+REQUESTING = 1
 EXECUTING = 2
 
 class Node:
@@ -22,10 +22,8 @@ class Node:
         self.id_ = manager.Value('i', id_)
         self.queue_lock = manager.Lock()
         self.queue = manager.list()
-        if parent_id > 0:
-            self.parent = nodes[parent_id]
-        else:
-            self.parent = None
+        self.nodes = nodes
+        self.parent = manager.Value('i', parent_id)
         self.semaphore = manager.Semaphore(0)
         self.status = manager.Value('i', FREE)
         self.status_lock = manager.Lock()
@@ -66,43 +64,44 @@ class Node:
         None.
 
         """
-        print(self, "requesting..")
-        self.queue.append(self)  # Add own id in own local queue
-        # if we don't have a parent, fine
-        if self.parent == None:
-            self.critical_section()
-        else:
-            self.parent.grant(self)
-            self.semaphore.acquire()
-            self.critical_section()
-            # we will not be able to generate
-            # new requests until we have served
-            # everyone who is waiting in the queue
-        while True:
-            node = None
-            with self.queue_lock:
-                if not len(self.queue) == 0:
-                    node = self.queue.pop(0)
-                    if node.id_ == self.id_:
-                        continue
-            # we perform the checking outside of
-            # the queue lock, because when we are
-            # awaiting for a node to give us
-            # back the control, we allow everybody
-            # else to use request for control to us
+        #print(self, "requesting..")
+        self.grant(self)
 
-            if node == None: # if we don't have anyone on the queue, great
-                break
-            # otherwise
-            # make the node its parent, i.e. reverse the edge to make child new root
-            self.parent = node
+    def process_queue(self):
+        #print(self, "processing queue")
+        node = None
+        with self.queue_lock:
+            if len(self.queue) > 0:
+                node = self.queue.pop(0)
+                # we perform the checking outside of
+                # the queue lock, because when we are
+                # awaiting for a node to give us
+                # back the control, we allow everybody
+                # else to use request for control to us
+        if node == None: # if we don't have anyone on the queue, great
+            return
+        # otherwise check if we have a parent, and request for its permission
+        parent = None
+        with self.status_lock:
+            if self.parent.value != -1:
+                parent = self.nodes[self.parent.value]
+        if parent != None:
+            parent.grant(self)
+            self.semaphore.acquire()
+            #print(self, "released by", self.parent.value)
+        # make the node its parent, i.e. reverse the edge to make child new root
+        if node.id_.value == self.id_.value:
+            #print(self, "executing cs")
+            self.critical_section()
+            #print(self, "cs complete")
+        else:
+            with self.status_lock:
+                self.parent.value = node.id_.value
             # release the node's semaphore to allow
             # it to execute critical section
+            #print(self, "releasing", node)
             node.semaphore.release()
-            # put itself in requesting node's queue
-            node.grant(self)
-            # wait for the node to finish
-            self.semaphore.acquire()
+        self.process_queue()
 
     def grant(self, node):
         """
@@ -121,42 +120,23 @@ class Node:
         # we use this variable to wait for grant
         # outside of all locks, so they can be
         # acquired by other processes
-        requesting = False
+        #print(self, "asked by", node)
+        with self.queue_lock:
+            # add the node to our queue
+            self.queue.append(node)
         with self.status_lock:
-            if self.status == FREE:
-                if self.parent == None:
-                    # if we don't have a parent AND we're doing nothing,
-                    # we cool
-                    node.semaphore.release()
-                else:
-                    # we're doing nothing, but we have a parent
-                    with self.queue_lock:
-                        # add the node to our queue
-                        self.queue.append(node)
-                        # if this is the first node, add us to the
-                        # parent's queue
-                        if len(self.queue) == 1:
-                            self.parent.grant(self)
-                            # mark ourselves as requesting.
-                            # we only make request to the parent
-                            # once.
-                            requesting = True
-            else:
-                # we're executing, so add and we're done
-                with self.queue_lock:
-                    # add the node to our queue
-                    self.queue.append(node)
-        if requesting:
-            # if we're requesting for a parent's grant, we wait
-            self.semaphore.acquire()
+            if self.status.value == EXECUTING:
+                return
+        self.process_queue()
 
     def critical_section(self):
         with self.status_lock:
-            self.status = EXECUTING
-            self.parent = None
+            self.status.value = EXECUTING
+            self.parent.value = -1
         sleep(SLEEP_TIME)
+        #print(self, "awake")
         with self.status_lock:
-            self.status = FREE
+            self.status.value = FREE
 
     def get_status(self):
         """
@@ -172,10 +152,7 @@ class Node:
             Current request_queue of the node.
 
         """
-        if self.parent:
-            return (self.status.value, self.parent.id_.value)#, list(self.queue.queue))
-        else:
-            return (self.status.value, -1)#, list(self.queue.queue))
+        return (self.status.value, self.parent.value)#, list(self.queue.queue))
 
     def __repr__(self):
         return "[Node %d]" % self.id_.value
