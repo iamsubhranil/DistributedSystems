@@ -66,7 +66,7 @@ class Node:
         None.
 
         """
-        print(self.__repr__())
+        print(self, "requesting..")
         self.queue.append(self)  # Add own id in own local queue
         # if we don't have a parent, fine
         if self.parent == None:
@@ -83,6 +83,8 @@ class Node:
             with self.queue_lock:
                 if not len(self.queue) == 0:
                     node = self.queue.pop(0)
+                    if node.id_ == self.id_:
+                        continue
             # we perform the checking outside of
             # the queue lock, because when we are
             # awaiting for a node to give us
@@ -174,6 +176,9 @@ class Node:
             return (self.status.value, self.parent.id_.value)#, list(self.queue.queue))
         else:
             return (self.status.value, -1)#, list(self.queue.queue))
+
+    def __repr__(self):
+        return "[Node %d]" % self.id_.value
 
 # queries and prints the status of all the neighbors
 def print_status(neighbors):
