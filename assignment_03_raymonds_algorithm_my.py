@@ -21,7 +21,7 @@ class Node:
     def __init__(self, manager, id_, nodes, parent_id):
         self.id_ = manager.Value('i', id_)
         self.queue_lock = manager.Lock()
-        self.queue = manager.Queue()
+        self.queue = manager.list()
         if parent_id > 0:
             self.parent = nodes[parent_id]
         else:
@@ -67,7 +67,7 @@ class Node:
 
         """
         print(self.__repr__())
-        self.queue.put(self)  # Add own id in own local queue
+        self.queue.append(self)  # Add own id in own local queue
         # if we don't have a parent, fine
         if self.parent == None:
             self.critical_section()
@@ -81,8 +81,8 @@ class Node:
         while True:
             node = None
             with self.queue_lock:
-                if not self.queue.empty():
-                    node = self.queue.get()
+                if not len(self.queue) == 0:
+                    node = self.queue.pop(0)
             # we perform the checking outside of
             # the queue lock, because when we are
             # awaiting for a node to give us
@@ -130,10 +130,10 @@ class Node:
                     # we're doing nothing, but we have a parent
                     with self.queue_lock:
                         # add the node to our queue
-                        self.queue.put(node)
+                        self.queue.append(node)
                         # if this is the first node, add us to the
                         # parent's queue
-                        if self.queue.qsize() == 1:
+                        if len(self.queue) == 1:
                             self.parent.grant(self)
                             # mark ourselves as requesting.
                             # we only make request to the parent
@@ -143,7 +143,7 @@ class Node:
                 # we're executing, so add and we're done
                 with self.queue_lock:
                     # add the node to our queue
-                    self.queue.put(node)
+                    self.queue.append(node)
         if requesting:
             # if we're requesting for a parent's grant, we wait
             self.semaphore.acquire()
