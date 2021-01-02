@@ -21,7 +21,7 @@ class Node:
     def __init__(self, manager, id_, nodes, parent_id):
         self.id_ = manager.Value('i', id_)
         self.queue_lock = manager.Lock()
-        self.queue = manager.list()
+        self.queue = manager.Queue()
         self.nodes = nodes
         self.parent = manager.Value('i', parent_id)
         self.semaphore = manager.Semaphore(0)
@@ -71,8 +71,8 @@ class Node:
         #print(self, "processing queue")
         node = None
         with self.queue_lock:
-            if len(self.queue) > 0:
-                node = self.queue.pop(0)
+            if self.queue.qsize() > 0:
+                semaphore, node = self.queue.get()
                 # we perform the checking outside of
                 # the queue lock, because when we are
                 # awaiting for a node to give us
@@ -90,17 +90,17 @@ class Node:
             self.semaphore.acquire()
             #print(self, "released by", self.parent.value)
         # make the node its parent, i.e. reverse the edge to make child new root
-        if node.id_.value == self.id_.value:
+        if node == self.id_.value:
             #print(self, "executing cs")
             self.critical_section()
             #print(self, "cs complete")
         else:
             with self.status_lock:
-                self.parent.value = node.id_.value
+                self.parent.value = node
             # release the node's semaphore to allow
             # it to execute critical section
             #print(self, "releasing", node)
-            node.semaphore.release()
+            semaphore.release()
         self.process_queue()
 
     def grant(self, node):
@@ -123,7 +123,7 @@ class Node:
         #print(self, "asked by", node)
         with self.queue_lock:
             # add the node to our queue
-            self.queue.append(node)
+            self.queue.put((node.semaphore, node.id_.value))
         with self.status_lock:
             if self.status.value == EXECUTING:
                 return
