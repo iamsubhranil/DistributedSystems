@@ -12,9 +12,12 @@ SLEEP_TIME = 0.5
 # interval to print the status of the nodes
 UPDATE_TIME = 0.3
 
+SENTINEL = -3
+
 FREE = 0
 REQUESTING = 1
 EXECUTING = 2
+COMPLETED = 3
 
 class Node:
 
@@ -28,6 +31,10 @@ class Node:
         self.status = manager.Value('i', FREE)
         self.status_lock = manager.Lock()
         self.my_requests = 0
+
+        self.cs_requested = manager.Value('i', 0)
+
+        self.dummy_queue = manager.list()
 
     def tick(self, max_req):  # main event loop
         """
@@ -64,44 +71,46 @@ class Node:
         None.
 
         """
+        with self.status_lock:
+            if self.cs_requested.value == 1:
+                return
+            self.status.value = REQUESTING
+            self.cs_requested.value = 1
         #print(self, "requesting..")
         self.grant(self)
 
     def process_queue(self):
         #print(self, "processing queue")
-        node = None
-        with self.queue_lock:
-            if self.queue.qsize() > 0:
-                semaphore, node = self.queue.get()
-                # we perform the checking outside of
-                # the queue lock, because when we are
-                # awaiting for a node to give us
-                # back the control, we allow everybody
-                # else to use request for control to us
-        if node == None: # if we don't have anyone on the queue, great
-            return
-        # otherwise check if we have a parent, and request for its permission
-        parent = None
-        with self.status_lock:
+        while True:
+            semaphore, node = self.queue.get()
+            self.dummy_queue.pop(0)
+            # we perform the checking outside of
+            # the queue lock, because when we are
+            # awaiting for a node to give us
+            # back the control, we allow everybody
+            # else to use request for control to us
+            # otherwise check if we have a parent, and request for its permission
+            if node == SENTINEL:
+                #print(self, "recevied sentinel")
+                self.status.value = COMPLETED
+                return
             if self.parent.value != -1:
                 parent = self.nodes[self.parent.value]
-        if parent != None:
-            parent.grant(self)
-            self.semaphore.acquire()
-            #print(self, "released by", self.parent.value)
-        # make the node its parent, i.e. reverse the edge to make child new root
-        if node == self.id_.value:
-            #print(self, "executing cs")
-            self.critical_section()
-            #print(self, "cs complete")
-        else:
-            with self.status_lock:
-                self.parent.value = node
-            # release the node's semaphore to allow
-            # it to execute critical section
-            #print(self, "releasing", node)
-            semaphore.release()
-        self.process_queue()
+                parent.grant(self)
+                self.semaphore.acquire()
+                #print(self, "released by", self.parent.value)
+            # make the node its parent, i.e. reverse the edge to make child new root
+            if node == self.id_.value:
+                #print(self, "executing cs")
+                self.critical_section()
+                #print(self, "cs complete")
+            else:
+                with self.status_lock:
+                    self.parent.value = node
+                # release the node's semaphore to allow
+                # it to execute critical section
+                #print(self, "releasing", node)
+                semaphore.release()
 
     def grant(self, node):
         """
@@ -121,13 +130,10 @@ class Node:
         # outside of all locks, so they can be
         # acquired by other processes
         #print(self, "asked by", node)
+        # add the node to our queue
         with self.queue_lock:
-            # add the node to our queue
             self.queue.put((node.semaphore, node.id_.value))
-        with self.status_lock:
-            if self.status.value == EXECUTING:
-                return
-        self.process_queue()
+            self.dummy_queue.append(node.id_.value)
 
     def critical_section(self):
         with self.status_lock:
@@ -137,6 +143,7 @@ class Node:
         #print(self, "awake")
         with self.status_lock:
             self.status.value = FREE
+            self.cs_requested.value = 0
 
     def get_status(self):
         """
@@ -152,23 +159,35 @@ class Node:
             Current request_queue of the node.
 
         """
-        return (self.status.value, self.parent.value)#, list(self.queue.queue))
+        return (self.status.value, self.parent.value, self.dummy_queue)
 
     def __repr__(self):
         return "[Node %d]" % self.id_.value
 
+
+STATUS_TEXT = ["free", "wait", "crit", "done"]
+def print_tree_rec(root, tree, neighbors, tab=0):
+    for _ in range(tab):
+        print("   ", end='')
+    print("|-", root, end=' ')
+    status = neighbors[root].get_status()
+    print("(", STATUS_TEXT[status[0]], ",", "queue:", status[2], ")")
+    for r in tree[root]:
+        print_tree_rec(r, tree, neighbors, tab + 1)
+
 # queries and prints the status of all the neighbors
 def print_status(neighbors):
-    STATUS_TEXT = ["free", "Waiting", "IN CRITICAL SECTION"]
+    l = len(neighbors)
     while True:
         i = 0
-        for neighbor in neighbors:
-            stat = neighbor.get_status()
-            #print("Node %2d: %20s (child of: Node %2d) (current queue: %30s)" %
-            #      (i, STATUS_TEXT[stat[0]], stat[1], ' '.join(stat[2])))
-            print("Node %2d: %20s (child of: Node %2d)" %
-                  (i, STATUS_TEXT[stat[0]], stat[1]))
-            i += 1
+        tree = [[] for _ in range(l)]
+        root = 0
+        for i, neighbor in enumerate(neighbors):
+            if neighbor.parent.value == -1:
+                root = i
+            else:
+                tree[neighbor.parent.value].append(i)
+        print_tree_rec(root, tree, neighbors)
         print()
         sleep(UPDATE_TIME)
 
@@ -193,6 +212,9 @@ def start_tick(neighbors, node, max_req):
     """
     neighbors[node].tick(max_req)
 
+def start_process_queue(neighbors, node):
+    neighbors[node].process_queue()
+
 def main():
     import sys
     try:
@@ -208,18 +230,15 @@ def main():
 
     # initialization of all the neighbors
     neighbors = []
-    parent_ids = [] # list of parents
     for i in range(num_nodes):
-        parent_id = random.randint(0, num_nodes - 1)
-        # check if whoever we chose as parent has chosen us
-        # as parent or not to avoid cycle
-        #while len(neighbors) > parent_id and parent_ids[parent_id] == i:
-            #parent_id = random.randint(0, num_nodes - 1)
-        neighbors.append(Node(manager, i, neighbors, i-1))
-        parent_ids.append(parent_id)
+        if i == 0:
+            parent_id = -1
+        else:
+            parent_id = random.randint(0, i - 1)
+        neighbors.append(Node(manager, i, neighbors, parent_id))
 
     # the nodes stop after this many total requests are made
-    max_req = num_nodes * 3
+    max_req = num_nodes
 
     # printer process initiation
     # the printer process is independent from the worker
@@ -229,12 +248,27 @@ def main():
     printer = Process(target=print_status, args=(neighbors,), daemon=True)
     printer.start()
 
+    processes = []
+    for i in range(num_nodes):
+        processes.append(Process(target=start_process_queue, args=(neighbors, i), daemon=True))
+        processes[-1].start()
+
     # the worker pool
     # it contains one process for each of the node in the
     # network. each process gets assigned to perform the
     # free -> request -> cs loop for one node.
     jobPool = Pool(processes=len(neighbors))
     jobPool.starmap(start_tick, zip(repeat(neighbors), range(len(neighbors)), repeat(max_req)))
+    jobPool.close()
+    jobPool.join()
+    # request done
+    for node in neighbors:
+        with node.queue_lock:
+            node.queue.put((None, SENTINEL))
+            node.dummy_queue.append(SENTINEL)
+
+    for p in processes:
+        p.join()
 
 
 if __name__ == "__main__":
