@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Dec 31 19:41:46 2020
+
+@author: Subhranil, Anubhab
 """
+
 from time import sleep
 from multiprocessing import Pool, Process, Manager
 import random
@@ -31,24 +34,22 @@ class Node:
         self.status = manager.Value('i', FREE)
         self.status_lock = manager.Lock()
         self.my_requests = 0
-
         self.cs_requested = manager.Value('i', 0)
-
         self.dummy_queue = manager.list()
+
 
     def tick(self, max_req):  # main event loop
         """
-        Local clock progression causing random request generation.
+        Local clock progression causing random request generation
 
         Parameters
         ----------
         max_req : int
-            Maximum number of requests after which the program terminates.
+            Maximum number of requests after which the program terminates
 
         Returns
         -------
         None.
-
         """
         while self.my_requests < max_req:
             # sleep for random interval of time
@@ -61,6 +62,7 @@ class Node:
                 self.request()
                 self.my_requests += 1
 
+
     def request(self):
         """
         Makes a new request. Enters Critical Section if it is root or
@@ -69,18 +71,23 @@ class Node:
         Returns
         -------
         None.
-
         """
         with self.status_lock:
             if self.cs_requested.value == 1:
                 return
             self.status.value = REQUESTING
             self.cs_requested.value = 1
-        #print(self, "requesting..")
         self.grant(self)
 
+
     def process_queue(self):
-        #print(self, "processing queue")
+        """
+        Processes the local queue to enter critical section or grant access to child
+
+        Returns
+        -------
+        None.
+        """
         while True:
             semaphore, node = self.queue.get()
             self.dummy_queue.pop(0)
@@ -112,19 +119,19 @@ class Node:
                 #print(self, "releasing", node)
                 semaphore.release()
 
+
     def grant(self, node):
         """
-        Give access to requesting child or adds it to queue for permitting later.
+        Add requestinf node to local queue
 
         Parameters
         ----------
         node : Node
-            Reference to the node which is requesting token access.
+            Reference to the node which is requesting token access
 
         Returns
         -------
         None.
-
         """
         # we use this variable to wait for grant
         # outside of all locks, so they can be
@@ -135,7 +142,16 @@ class Node:
             self.queue.put((node.semaphore, node.id_.value))
             self.dummy_queue.append(node.id_.value)
 
+
     def critical_section(self):
+        """
+        Executes the critical section
+
+        Returns
+        -------
+        None
+
+        """
         with self.status_lock:
             self.status.value = EXECUTING
             self.parent.value = -1
@@ -145,6 +161,7 @@ class Node:
             self.status.value = FREE
             self.cs_requested.value = 0
 
+
     def get_status(self):
         """
         Retrieves the status of the node
@@ -152,21 +169,49 @@ class Node:
         Returns
         -------
         int
-            execution status of the node.
+            execution status of the node
         int
-            current parent of the node.
+            current parent of the node
         String
-            Current request_queue of the node.
-
+            Current request_queue of the node
         """
         return (self.status.value, self.parent.value, self.dummy_queue)
 
+
     def __repr__(self):
+        """
+        Returns a representation of Node object
+
+        Returns
+        -------
+        String
+            String representation of Node object
+        """
         return "[Node %d]" % self.id_.value
 
 
 STATUS_TEXT = ["free", "wait", "crit", "done"]
+
 def print_tree_rec(root, tree, neighbors, tab=0):
+    """
+    Display the current logical tree structure of the network
+
+    Parameters
+    ----------
+    root : int
+        Root of the tree currently
+    tree : List of lists
+        The tree represented as list of list
+        where each list represents the list of children
+    neighbors : List of Nodes
+        List of all nodes in the graph
+    tab : int, optional
+        Amount of space wich increases with level of tree. The default is 0
+
+    Returns
+    -------
+    None
+    """
     for _ in range(tab):
         print("   ", end='')
     print("|-", root, end=' ')
@@ -175,8 +220,20 @@ def print_tree_rec(root, tree, neighbors, tab=0):
     for r in tree[root]:
         print_tree_rec(r, tree, neighbors, tab + 1)
 
-# queries and prints the status of all the neighbors
+
 def print_status(neighbors):
+    """
+    Queries and prints the status of all the neighbors
+
+    Parameters
+    ----------
+    neighbors : List of Nodes
+        List of all nodes in the graph
+
+    Returns
+    -------
+    None
+    """
     l = len(neighbors)
     while True:
         i = 0
@@ -189,7 +246,8 @@ def print_status(neighbors):
                 tree[neighbor.parent.value].append(i)
         print_tree_rec(root, tree, neighbors)
         print()
-        sleep(UPDATE_TIME)
+        sleep(UPDATE_TIME)  # repeat printing process at regular interval
+
 
 def start_tick(neighbors, node, max_req):
     """
@@ -198,22 +256,38 @@ def start_tick(neighbors, node, max_req):
 
     Parameters
     ----------
-    neighbors : Node array
-        Array of all the nodes in the graph.
-    node : TYPE
-        DESCRIPTION.
-    max_req : TYPE
-        DESCRIPTION.
+    neighbors : List of Nodes
+        List of all nodes in the graph
+    node : Node
+        Node object whose tick() procedure is to be called
+    max_req : int
+        Maximum number of requests a node can make
+
+    Returns
+    -------
+    None
+    """
+    neighbors[node].tick(max_req)
+
+
+def start_process_queue(neighbors, node):
+    """
+    Initiates the process_queue() for each of the nodes
+
+    Parameters
+    ----------
+    neighbors : List of Nodes
+        List of all nodes in the graph
+    node : Node
+        Node object whose process_queue() procedure is to be called
 
     Returns
     -------
     None.
 
     """
-    neighbors[node].tick(max_req)
-
-def start_process_queue(neighbors, node):
     neighbors[node].process_queue()
+
 
 def main():
     import sys
@@ -234,8 +308,8 @@ def main():
         if i == 0:
             parent_id = -1
         else:
-            parent_id = random.randint(0, i - 1)
-        neighbors.append(Node(manager, i, neighbors, parent_id))
+            parent_id = random.randint(0, i - 1)  # generate random parent from exissting nodes
+        neighbors.append(Node(manager, i, neighbors, parent_id))  # append new node to the graph
 
     # the nodes stop after this many total requests are made
     max_req = num_nodes
