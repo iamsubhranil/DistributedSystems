@@ -15,6 +15,7 @@ SLEEP_TIME = 0.5
 # interval to print the status of the nodes
 UPDATE_TIME = 0.3
 
+# request terminating value in local queue
 SENTINEL = -3
 
 FREE = 0
