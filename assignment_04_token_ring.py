@@ -22,29 +22,35 @@ class Node:
         # 2 denotes the process is requesting
         self.token = manager.Value('i', 0)
         self.token_lock = manager.Lock()
-        self.my_requests = 0
+        self.my_requests = manager.Value('i', 0)
+        self.request_done = manager.Value('i', 0)
 
     def mayrequest(self, max_req):
-        while self.my_requests < max_req:
+        while self.my_requests.value < max_req:
             # sleep for random interval of time
             sleep(random.random())
             sleep(random.random())
             if random.randint(0, 1) == 1:
-                self.request()
-                self.my_requests += 1
+                if self.request(self.my_requests.value == (max_req - 1)):
+                    self.my_requests.value += 1
 
-    def request(self):
+    def request(self, done):
         with self.token_lock:
             # if we're already in the cs, bail
             if self.token.value == 1 or self.token.value == 2:
-                return
+                return False
             else:
                 self.token.value = 2
         with self.queue_lock:
             self.queue.append(self.id_.value)
+            # if this is our last request, set the flag
+            if done:
+                self.request_done.value = 1
+            # if the queue was previously empty, wake everyone
             if len(self.queue) == 1:
                 for i in range(self.num_nodes):
                     self.watch.release()
+        return True
         #print("Requesting - ", self.id_.value)
 
     def cs(self):
@@ -69,9 +75,12 @@ class Node:
             if cs_go:
                 #print("Processing ...  %d", node.value)
                 self.cs()
+                if self.request_done.value == 1:
+                    self.token.value = 3
+                    return
 
     def get_status(self):
-        return (self.id_.value, self.token.value, self.queue)
+        return (self.id_.value, self.token.value, self.queue, self.my_requests.value)
 
 
 def init_processing(network, node):
@@ -83,13 +92,13 @@ def init_request(network, node, max_req):
 
 # queries and prints the status of all the neighbors
 def print_status(neighbors):
-    STATUS_TEXT = ["FREE", "IN CRITICAL SECTION", "Requesting"]
+    STATUS_TEXT = ["Free", "IN CRITICAL SECTION", "Requesting", "Done"]
     while True:
         i = 0
         for neighbor in neighbors:
             stat = neighbor.get_status()
-            print("Node %2d:      Status = %20s" %
-                  (stat[0], STATUS_TEXT[stat[1]]),end='\t')
+            print("Node %2d:      Status = %20s (Requests: %2d)" %
+                  (stat[0], STATUS_TEXT[stat[1]], stat[3]),end='\t')
             if stat[1] == 1:
                 print("Queue = ",stat[2])
             else:
