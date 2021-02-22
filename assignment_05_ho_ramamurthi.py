@@ -8,7 +8,6 @@ from multiprocessing import Pool, Process, Manager
 import random
 from itertools import repeat
 import sys
-import signal
 
 CONTROLLER_SLEEP = 0.2
 
@@ -19,16 +18,46 @@ class Resource:
         self.id_ = i
         self.acquired_by = m.Value('i', -1)
 
+
     def acquire(self, node):
+        """
+        Acquires the resource object
+
+        Parameters
+        ----------
+        node : Node
+            Node object requesting for the resource
+
+        Returns
+        -------
+        None.
+
+        """
         node.print("Trying to acquire R" + str(self.id_),
                    "[Currently acquired by " + str(self.acquired_by.value) + "]")
         self.sem.acquire()
         self.acquired_by.value = node.id_
         node.print("Acquired R" + str(self.id_))
 
+
     def release(self, node):
+        """
+        Releases the resource object once served
+
+        Parameters
+        ----------
+        node : Node
+            Node object requesting for the resource
+
+        Returns
+        -------
+        None.
+
+        """
         node.print("Released R" + str(self.id_))
         self.sem.release()
+
+
 
 class Node:
 
@@ -46,7 +75,23 @@ class Node:
         self.resource_semaphores = res_sems
         self.my_requests = 0
 
+
     def fire(self, max_req, global_sema):
+        """
+        Generate new resource requests
+
+        Parameters
+        ----------
+        max_req : int
+            Maximum number of requests a node can make.
+        global_sema : Semaphore
+            Semaphore to check if further requests are possible.
+
+        Returns
+        -------
+        None.
+
+        """
         while self.my_requests < max_req:
             if random.randint(0, 1) == 1:
                 self.request()
@@ -55,46 +100,141 @@ class Node:
             sleep(random.random())
             sleep(random.random())
             sleep(random.random())
-        self.print("Maximum Requests served")
-        global_sema.release()
+        self.print("Maximum Requests served. Exiting ...")
+        global_sema.release()  # Release semaphore if current node has reached maximum requests
+
 
     def request(self):
-        num_res = random.randint(1, self.num_resource)
-        resources = random.sample(range(self.num_resource), num_res)
+        """
+        Request resources and utilise them
+
+        Returns
+        -------
+        None.
+
+        """
+        num_res = random.randint(1, self.num_resource)  # number f resources required
+        resources = random.sample(range(self.num_resource), num_res)  # which resources are required
         sleep_time = random.random() + random.random()
         with self.res_tab_lock:
             self.print("Resource list generated:", self.get_remaining_resources(resources))
             for res in resources:
-                self.resource_table[res][self.id_] = -1
-        i = 0
+                self.resource_table[res][self.id_] = -1  # update resource status table
+        i = 0  # number of resources held
         for res in resources:
             self.resource_semaphores[res].acquire(self)
             with self.res_tab_lock:
                 self.resource_table[res][self.id_] = 1
             self.print("Remaining", self.get_remaining_resources(resources[i+1:]))
             i += 1
+        # All resources accessed, now utilise
         self.execute(resources, sleep_time)
 
+
     def get_remaining_resources(self, res):
+        """
+        Tells the resources that have been requested but not yet allocated to requesting process
+        Also mentions which process currently holds the requested resources
+
+        Parameters
+        ----------
+        res : List
+            List of Resources.
+
+        Returns
+        -------
+        res_acq : List
+            List of strings mentioning which resouce is held by whom.
+
+        """
         res_acq = {}
         for r in res:
             res_acq["R" + str(r)] = self.resource_semaphores[r].acquired_by.value
         return res_acq
 
+
     def print(self, *args):
+        """
+        Displays passed information along with id of the node
+
+        Parameters
+        ----------
+        *args : Pointer
+            Variable number of arguments.
+
+        Returns
+        -------
+        None.
+
+        """
         print("[Node %3d] " % self.id_, *args)
 
+
+
     def execute(self, resources, sleep_time):
+        """
+        Utilise the requested resources
+
+        Parameters
+        ----------
+        resources : List
+            List of all the resources that are requested.
+        sleep_time : int
+            Time to execute.
+
+        Returns
+        -------
+        None.
+
+        """
         sleep(sleep_time)
         for res in resources:
             with self.res_tab_lock:
                 self.resource_table[res][self.id_] = 0
             self.resource_semaphores[res].release(self)
 
+
 def fire_node(nodes, num, max_req, global_sema):
+    """
+    Initiates the resource requests for each of the nodes
+
+    Parameters
+    ----------
+    nodes : List of Nodes
+        List of all nodes in the system.
+    num : int
+        Number of nodes in the system.
+    max_req : int
+        Maximum number of requests a node can make.
+    global_sema : Semaphore
+        Semaphore to check if further requests are possible.
+
+    Returns
+    -------
+    None.
+
+    """
     nodes[num].fire(max_req, global_sema)
 
+
 def print_path(path, vertex, visited=set()):
+    """
+    Displays the cycle recursively if deadlock is present
+
+    Parameters
+    ----------
+    path : List
+        List of nodes falling the cycle.
+    vertex : int
+        ID of the last node in the cycle.
+    visited : Set, optional
+        Set of vertices that are visited in the path. The default is set().
+
+    Returns
+    -------
+    None.
+
+    """
     if path[vertex] == -1:
         print(vertex, end=' ')
     else:
@@ -104,12 +244,38 @@ def print_path(path, vertex, visited=set()):
             print("-->", end=' ')
         print(vertex, end=' ')
 
+
 def dfs(adj, vertex, unvisited, path, stack=[]):
+    """
+    DFS algorithm to check if WFG contains cycle
+
+    Parameters
+    ----------
+    adj : matrix
+        Adjacency matrix of WFG.
+    vertex : int
+        ID of vertex from which DFS will be initiated.
+    unvisited : List
+        List of vertices not yet visited by DFS algorithm.
+    path : List
+        List of vertices falling in the path of the cycle.
+    stack : List, optional
+        Stack to be used by the DFS algorithm. The default is [].
+
+    Returns
+    -------
+    Boolean
+        True if DFS algorithm completes successfully, False otehrwise.
+    int
+        If DFS is usuccessful then ID of the vertex from where cycle
+        is generated, None otehrwise.
+
+    """
     #print("at", vertex)
     if vertex in unvisited:
         unvisited.remove(vertex)
     if vertex in stack:
-        return False, vertex
+        return False, vertex  # cycle found
     stack.append(vertex)
     for v in adj[vertex]:
         path[v] = vertex
@@ -119,7 +285,27 @@ def dfs(adj, vertex, unvisited, path, stack=[]):
     stack.pop()
     return True, None
 
+
 def check_for_deadlock(res_tab, res_tab_lock, num_nodes, global_sema):
+    """
+    Controller module responsible for detecting deadlock
+
+    Parameters
+    ----------
+    res_tab : 2-d List
+        Resource Status Table.
+    res_tab_lock : Lock
+        Lock to be used while accessing the resource status table.
+    num_nodes : int
+        Number of nodes in the system.
+    global_sema : Semaphore
+        Semaphore to check if further requests are possible.
+
+    Returns
+    -------
+    None.
+
+    """
     while True:
         print("[Controller] Starting deadlock detection..")
         adjacency_matrix = [[] for _ in range(num_nodes)]
@@ -145,7 +331,7 @@ def check_for_deadlock(res_tab, res_tab_lock, num_nodes, global_sema):
             cycle = cycle or not c
         if cycle:
             print("[Controller] Deadlock detected! System is UNSAFE!")
-            print("[Controller] The cycle is: ")
+            print("[Controller] The cycle is: ", end="")
             #print(path)
             print_path(path, last_vertex)
             print()
@@ -156,6 +342,8 @@ def check_for_deadlock(res_tab, res_tab_lock, num_nodes, global_sema):
         else:
             print("[Controller] No deadlock detected!")
         sleep(CONTROLLER_SLEEP)
+
+
 
 def main():
     if len(sys.argv) < 3:
@@ -169,12 +357,11 @@ def main():
     res_tab_lock = m.Lock()
     res_sems = m.list([Resource(m, i) for i in range(num_resource)])
     global_sema = m.Semaphore(0)
-    global_sema_lock = m.Lock()
+
     nodes = [Node(i, res_tab, res_tab_lock, num_resource, res_sems) for i in range(num_process)]
 
     # the nodes stop after this many total requests are made
-    max_req = num_process/2
-    max_checks = num_process * CONTROLLER_SLEEP
+    max_req = num_process
 
     #killEvent = m.Event()
     # controller process
