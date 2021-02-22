@@ -12,6 +12,24 @@ import signal
 
 CONTROLLER_SLEEP = 0.2
 
+class Resource:
+
+    def __init__(self, m, i):
+        self.sem = m.Semaphore()
+        self.id_ = i
+        self.acquired_by = m.Value('i', -1)
+
+    def acquire(self, node):
+        node.print("Trying to acquire R" + str(self.id_),
+                   "[Currently acquired by " + str(self.acquired_by.value) + "]")
+        self.sem.acquire()
+        self.acquired_by.value = node.id_
+        node.print("Acquired R" + str(self.id_))
+
+    def release(self, node):
+        node.print("Released R" + str(self.id_))
+        self.sem.release()
+
 class Node:
 
     def __init__(self, id_, res_tab, res_tab_lock, num_res, res_sems):
@@ -27,10 +45,9 @@ class Node:
         # semaphores for the nodes to wait on resources
         self.resource_semaphores = res_sems
         self.my_requests = 0
-        self.die = False
 
     def fire(self, max_req):
-        while self.my_requests < max_req and not self.die:
+        while self.my_requests < max_req:
             if random.randint(0, 1) == 1:
                 self.request()
                 self.my_requests += 1
@@ -42,19 +59,25 @@ class Node:
     def request(self):
         num_res = random.randint(1, self.num_resource)
         resources = random.sample(range(self.num_resource), num_res)
-        sleep_time = random.random()
+        sleep_time = random.random() + random.random()
         with self.res_tab_lock:
+            self.print("Resource list generated:", self.get_remaining_resources(resources))
             for res in resources:
                 self.resource_table[res][self.id_] = -1
+        i = 0
         for res in resources:
-            self.print("Waiting for R" + str(res) + "..")
-            self.resource_semaphores[res].acquire()
-            self.print("  Acquired  R" + str(res) + "..")
+            self.resource_semaphores[res].acquire(self)
             with self.res_tab_lock:
                 self.resource_table[res][self.id_] = 1
-
-        sleep_time = 0.2
+            self.print("Remaining", self.get_remaining_resources(resources[i:]))
+            i += 1
         self.execute(resources, sleep_time)
+
+    def get_remaining_resources(self, res):
+        res_acq = {}
+        for r in res:
+            res_acq["R" + str(r)] = self.resource_semaphores[r].acquired_by.value
+        return res_acq
 
     def print(self, *args):
         print("[Node %3d] " % self.id_, *args)
@@ -64,8 +87,7 @@ class Node:
         for res in resources:
             with self.res_tab_lock:
                 self.resource_table[res][self.id_] = 0
-            self.print("  Released  R" + str(res) + "..")
-            self.resource_semaphores[res].release()
+            self.resource_semaphores[res].release(self)
 
 def fire_node(nodes, num, max_req):
     nodes[num].fire(max_req)
@@ -141,7 +163,7 @@ def main():
     res_tab = [m.list([0] * num_process) for _ in range(num_resource)]
     res_tab = m.list(res_tab)
     res_tab_lock = m.Lock()
-    res_sems = m.list([m.Semaphore() for _ in range(num_resource)])
+    res_sems = m.list([Resource(m, i) for i in range(num_resource)])
     nodes = [Node(i, res_tab, res_tab_lock, num_resource, res_sems) for i in range(num_process)]
 
     # the nodes stop after this many total requests are made
