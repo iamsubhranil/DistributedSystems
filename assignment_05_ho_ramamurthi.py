@@ -1,6 +1,12 @@
-from multiprocessing import Pool, Semaphore, Manager
-import random
+"""
+Created on Sun Feb 21 19:41:46 2021
 
+@author: Subhranil, Anubhab
+"""
+from time import sleep
+from multiprocessing import Pool, Process, Manager
+import random
+from itertools import repeat
 class Node:
 
     def __init__(self, id_, res_tab, res_tab_lock, num_res, res_sems):
@@ -15,11 +21,15 @@ class Node:
         self.num_resource = num_res
         # semaphores for the nodes to wait on resources
         self.resource_semaphores = res_sems
+        self.my_requests = 0
 
-    def fire(self):
-        while True:
+
+    def fire(self, max_req):
+        while self.my_requests < max_req:
             if random.randint(0, 1) == 1:
                 self.request()
+                self.my_requests += 1
+
 
             sleep(random.random())
             sleep(random.random())
@@ -46,8 +56,8 @@ class Node:
                 self.resource_table[res][self.id_] = 0
             self.resource_semaphores[res].release()
 
-def fire_node(nodes, num):
-    nodes[num].fire()
+def fire_node(nodes, num, max_req):
+    nodes[num].fire(max_req)
 
 def print_path(path, vertex):
     if path[vertex] == 0:
@@ -62,10 +72,10 @@ def check_for_deadlock(res_tab, res_tab_lock, num_nodes):
         adjacency_matrix = [[] for _ in range(num_nodes)]
         with res_tab_lock:
             for row in res_tab:
-                to_vertex = [idx for idx in range(num_nodes) if row[idx] == 1][0]
+                to_vertex = [idx for idx in range(num_nodes) if row[idx] == 1]
                 from_vertices = [idx for idx in range(num_nodes) if row[idx] == -1]
                 for v in from_vertices:
-                    adjacency_matrix[v].append(to)
+                    adjacency_matrix[v].append(to_vertex)
         unvisited = list(range(num_nodes))
         cycle = False
         path = []
@@ -75,15 +85,18 @@ def check_for_deadlock(res_tab, res_tab_lock, num_nodes):
             path = [0] * num_nodes
             path[v] = 0
             for vertex in locally_visited:
-                unvisited.remove(vertex)
-                for u in adjacency_matrix[vertex]:
-                    path[u] = vertex
-                    if u in locally_visited:
-                        last_vertex = u
-                        cycle = True
-                        break
-                    else:
-                        locally_visited.append(u)
+                if v in unvisited:
+                    unvisited.remove(v)
+                for adj in adjacency_matrix[vertex]:
+                    for u in adj:
+                        print (adj)
+                        path[u] = vertex
+                        if u in locally_visited:
+                            last_vertex = u
+                            cycle = True
+                            break
+                        else:
+                            locally_visited.append(u)
                 if cycle:
                     break
             if cycle:
@@ -107,5 +120,40 @@ def main():
     res_sems = m.list([m.Semaphore() for _ in range(num_resource)])
     nodes = [Node(i, res_tab, res_tab_lock, num_resource, res_sems) for i in range(num_process)]
 
+    # the nodes stop after this many total requests are made
+    max_req = num_process/2
+
+    controller = Process(target=check_for_deadlock, args=(res_tab, res_tab_lock, len(nodes)), daemon=True)
+    controller.start()
+
+    '''
+    processes = []
+    for i in range(num_process):
+        processes.append(Process(target=check_for_deadlock, args=(), daemon=True))
+        processes[-1].start()
+        '''
+    # the worker pool
+    # it contains one process for each of the node in the
+    # network. each process gets assigned to perform the
+    # free -> request -> cs loop for one node.
+    jobPool = Pool(processes=len(nodes))
+    jobPool.starmap(fire_node, zip(repeat(nodes), range(len(nodes)), repeat(max_req)))
+    jobPool.close()
+    jobPool.join()
+    # request done
+
+    controller.close()
+    #controller.join()
+
+    '''
+    for node in nodes:
+        with node.queue_lock:
+            node.queue.put((None, SENTINEL))
+            node.dummy_queue.append(SENTINEL)
+
+
+    for p in processes:
+        p.join()
+        '''
 if __name__ == "__main__":
     main()
