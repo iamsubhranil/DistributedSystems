@@ -46,7 +46,7 @@ class Node:
         self.resource_semaphores = res_sems
         self.my_requests = 0
 
-    def fire(self, max_req):
+    def fire(self, max_req, global_sema):
         while self.my_requests < max_req:
             if random.randint(0, 1) == 1:
                 self.request()
@@ -55,6 +55,8 @@ class Node:
             sleep(random.random())
             sleep(random.random())
             sleep(random.random())
+        self.print("Maximum Requests served")
+        global_sema.release()
 
     def request(self):
         num_res = random.randint(1, self.num_resource)
@@ -69,7 +71,7 @@ class Node:
             self.resource_semaphores[res].acquire(self)
             with self.res_tab_lock:
                 self.resource_table[res][self.id_] = 1
-            self.print("Remaining", self.get_remaining_resources(resources[i:]))
+            self.print("Remaining", self.get_remaining_resources(resources[i+1:]))
             i += 1
         self.execute(resources, sleep_time)
 
@@ -89,8 +91,8 @@ class Node:
                 self.resource_table[res][self.id_] = 0
             self.resource_semaphores[res].release(self)
 
-def fire_node(nodes, num, max_req):
-    nodes[num].fire(max_req)
+def fire_node(nodes, num, max_req, global_sema):
+    nodes[num].fire(max_req, global_sema)
 
 def print_path(path, vertex, visited=set()):
     if path[vertex] == -1:
@@ -117,7 +119,7 @@ def dfs(adj, vertex, unvisited, path, stack=[]):
     stack.pop()
     return True, None
 
-def check_for_deadlock(res_tab, res_tab_lock, num_nodes, killEvent):
+def check_for_deadlock(res_tab, res_tab_lock, num_nodes, global_sema):
     while True:
         print("[Controller] Starting deadlock detection..")
         adjacency_matrix = [[] for _ in range(num_nodes)]
@@ -147,7 +149,9 @@ def check_for_deadlock(res_tab, res_tab_lock, num_nodes, killEvent):
             #print(path)
             print_path(path, last_vertex)
             print()
-            killEvent.set()
+            #killEvent.set()with global_sema_lock:
+            for i in range(num_nodes):  # release all as no other requests can be granted
+                global_sema.release()
             return
         else:
             print("[Controller] No deadlock detected!")
@@ -164,14 +168,17 @@ def main():
     res_tab = m.list(res_tab)
     res_tab_lock = m.Lock()
     res_sems = m.list([Resource(m, i) for i in range(num_resource)])
+    global_sema = m.Semaphore(0)
+    global_sema_lock = m.Lock()
     nodes = [Node(i, res_tab, res_tab_lock, num_resource, res_sems) for i in range(num_process)]
 
     # the nodes stop after this many total requests are made
     max_req = num_process/2
+    max_checks = num_process * CONTROLLER_SLEEP
 
-    killEvent = m.Event()
+    #killEvent = m.Event()
     # controller process
-    controller = Process(target=check_for_deadlock, args=(res_tab, res_tab_lock, num_process, killEvent), daemon=True)
+    controller = Process(target=check_for_deadlock, args=(res_tab, res_tab_lock, num_process, global_sema), daemon=True)
     controller.start()
 
     '''
@@ -185,14 +192,17 @@ def main():
     # network. each process gets assigned to perform the
     # free -> request -> cs loop for one node.
     jobPool = Pool(processes=len(nodes))
-    jobPool.starmap_async(fire_node, zip(repeat(nodes), range(len(nodes)), repeat(max_req)))
+    jobPool.starmap_async(fire_node, zip(repeat(nodes), range(len(nodes)), repeat(max_req), repeat(global_sema)))
     #jobPool.close()
     # request done
 
-    killEvent.wait()
+    for _ in range(num_process):
+        global_sema.acquire()
+    #killEvent.wait()
     jobPool.terminate()
-    controller.join()
-    controller.close()
+    #controller.close()
+    controller.terminate()
+
     #controller.join()
 
     '''
