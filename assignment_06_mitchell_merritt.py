@@ -4,7 +4,7 @@ Created on Sat Mar 27 19:41:46 2021
 
 @author: Subhranil, Anubhab
 """
-from multiprocessing import Pool, Process, Manager
+from multiprocessing import Pool, Manager
 from time import sleep
 import random
 from itertools import repeat
@@ -62,7 +62,7 @@ class Resource:
 
         """
         with self.lock:
-            print("here", self.id_.value)
+            #print("here", self.id_.value)
             self.acquired_by[0].print("Released R" + str(self.id_.value))
             self.acquired_by[0] = None
             self.sem.release()
@@ -119,7 +119,7 @@ class Node:
         None.
 
         """
-        num_res = random.randint(1, self.num_resource)  # number f resources required
+        num_res = random.randint(1, self.num_resource)  # number of resources required
         resources = random.sample(range(self.num_resource), num_res)  # which resources are required
         sleep_time = random.random() + random.random()
         self.print("Resource list generated:", resources)
@@ -170,7 +170,7 @@ class Node:
             self.print("Clearing blocking list")
             while len(self.blocking) > 0:
                 self.blocking.pop()
-        self.print("CS done")
+        self.print("Execution done")
 
     def grant(self, node):
         with self.status_lock:
@@ -232,7 +232,7 @@ def fire_node(nodes, num, max_req):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: %s <num_nodes> <num_resources>" % sys.argv[0])
+        print("Usage: %s <num_processes> <num_resources>" % sys.argv[0])
         return
     m = Manager()
     global_sema = m.Semaphore()
@@ -245,12 +245,10 @@ def main():
     nodes = [Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)]
 
     # the nodes stop after this many total requests are made
-    max_req = num_process * 5
+    max_req = num_process
 
     # the worker pool
-    # it contains one process for each of the node in the
-    # network. each process gets assigned to perform the
-    # free -> request -> cs loop for one node.
+    # it contains one process for each of the node in the network
     jobPool = Pool(processes=len(nodes))
     jobPool.starmap_async(fire_node, zip(repeat(nodes), range(num_process), repeat(max_req)))
 
