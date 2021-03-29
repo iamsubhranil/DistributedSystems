@@ -67,13 +67,14 @@ class Resource:
 
 class Node:
 
-    def __init__(self, id, manager):
+    def __init__(self, id, manager, resource_list):
 
         self.id = id
         self.u = manager.Value('i',0)
         self.v = 0
-        self.blocking = manager.List()
+        self.blocking = manager.list()
         self.status_lock = manager.Lock()
+        self.global_resource_list = resource_list
 
     def fire(self, max_req, global_sema):
         """
@@ -117,7 +118,7 @@ class Node:
         sleep_time = random.random() + random.random()
         self.print("Resource list generated:", self.get_remaining_resources(resources))
         for res in resources:
-            self.resource_semaphores[res].acquire(self)
+            self.global_resource_list[res].acquire(self)
         for res in resources:
             self.global_resource_list[res].access()
         # All resources accessed, now utilise
@@ -177,6 +178,8 @@ class Node:
                 # the network, thereby ensuring a cycle
                 if self.u.value == self.v.value and self.u.value == val:
                     print("DEADLOCK")
+                    #for i in range(num_nodes):  # release all as no other requests can be granted
+                        #global_sema.release()
                     sys.exit(1)
                 else:
                     self.u.value = val
@@ -190,7 +193,55 @@ class Node:
             node.transmit(val)
 
 
+def fire_node(nodes, num, max_req, global_sema):
+    """
+    Initiates the resource requests for each of the nodes
+
+    Parameters
+    ----------
+    nodes : List of Nodes
+        List of all nodes in the system.
+    num : int
+        Number of nodes in the system.
+    max_req : int
+        Maximum number of requests a node can make.
+    global_sema : Semaphore
+        Semaphore to check if further requests are possible.
+
+    Returns
+    -------
+    None.
+
+    """
+    nodes[num].fire(max_req, global_sema)
+
+
 def main():
 
     m = Manager()
     global_sema = m.Semaphore(0)
+    num_process = int(sys.argv[1])
+    num_resource = int(sys.argv[2])
+    #global_resource_list = m.list([0] * num_resource)
+    #global_res_list_lock = m.Lock()
+    global_res_sems = m.list([Resource(m, i) for i in range(num_resource)])
+
+    nodes = [Node(i, m, global_res_sems) for i in range(num_process)]
+
+    # the nodes stop after this many total requests are made
+    max_req = num_process
+
+    # the worker pool
+    # it contains one process for each of the node in the
+    # network. each process gets assigned to perform the
+    # free -> request -> cs loop for one node.
+    jobPool = Pool(processes=len(nodes))
+    jobPool.starmap_async(fire_node, zip(repeat(nodes), range(len(nodes)), repeat(max_req), repeat(global_sema)))
+
+    for _ in range(num_process):
+        global_sema.acquire()
+
+
+
+if __name__ == "__main__":
+    main()
