@@ -14,8 +14,8 @@ class Resource:
 
     def __init__(self, m, i):
         self.sem = m.Semaphore()
-        self.id_ = i
-        self.acquired_by = None
+        self.id_ = m.Value('i', i)
+        self.acquired_by = m.list([None]) # we create a shared list to store the node
         self.lock = m.Lock()
 
     def acquire(self, node):
@@ -32,19 +32,20 @@ class Resource:
         None.
 
         """
-        node.print("Trying to acquire R" + str(self.id_),
-                   "[Currently acquired by " + str(self.acquired_by) + "]")
+        node.print("Trying to acquire R" + str(self.id_.value),
+                   "[Currently acquired by " + str(self.acquired_by[0]) + "]")
         with self.lock:
-            if self.acquired_by == None:
-                self.acquired_by = node
+            if self.acquired_by[0] == None:
+                self.acquired_by[0] = node
                 self.sem.release()
                 return
-        self.acquired_by.grant(node)
+        self.acquired_by[0].grant(node)
 
     def access(self, node):
         self.sem.acquire()
-        node.print("Acquired R" + str(self.id_))
-        self.acquired_by = node
+        with self.lock:
+            self.acquired_by[0] = node
+            node.print("Acquired R" + str(self.id_.value))
 
     def release(self):
         """
@@ -61,22 +62,27 @@ class Resource:
 
         """
         with self.lock:
-            self.acquired_by.print("Released R" + str(self.id_))
-            self.acquired_by = None
+            print("here", self.id_.value)
+            self.acquired_by[0].print("Released R" + str(self.id_.value))
+            self.acquired_by[0] = None
             self.sem.release()
 
 class Node:
 
-    def __init__(self, id, manager, resource_list):
+    def __init__(self, id_, num_nodes, manager, resource_list, global_sema):
 
-        self.id = id
-        self.u = manager.Value('i',0)
-        self.v = 0
+        self.id_ = manager.Value('i', id_)
+        self.u = manager.Value('i', 0)
+        self.v = manager.Value('i', 0)
         self.blocking = manager.list()
         self.status_lock = manager.Lock()
         self.global_resource_list = resource_list
+        self.global_sema = global_sema
+        self.my_requests = 0
+        self.num_resource = len(resource_list)
+        self.num_nodes = num_nodes
 
-    def fire(self, max_req, global_sema):
+    def fire(self, max_req):
         """
         Generate new resource requests
 
@@ -101,7 +107,7 @@ class Node:
             sleep(random.random())
             sleep(random.random())
         self.print("Maximum Requests served. Exiting ...")
-        global_sema.release()  # Release semaphore if current node has reached maximum requests
+        self.global_sema.release()  # Release semaphore if current node has reached maximum requests
 
 
     def request(self):
@@ -116,11 +122,11 @@ class Node:
         num_res = random.randint(1, self.num_resource)  # number f resources required
         resources = random.sample(range(self.num_resource), num_res)  # which resources are required
         sleep_time = random.random() + random.random()
-        self.print("Resource list generated:", self.get_remaining_resources(resources))
+        self.print("Resource list generated:", resources)
         for res in resources:
             self.global_resource_list[res].acquire(self)
         for res in resources:
-            self.global_resource_list[res].access()
+            self.global_resource_list[res].access(self)
         # All resources accessed, now utilise
         self.execute(resources, sleep_time)
 
@@ -139,7 +145,7 @@ class Node:
         None.
 
         """
-        print("[Node %3d] " % self.id_, *args)
+        print("[Node %3d] " % self.id_.value, *args)
 
     def execute(self, resources, sleep_time):
         """
@@ -158,17 +164,21 @@ class Node:
 
         """
         sleep(sleep_time)
-        for r in resources:
-            self.resource_list[r].release(self)
         with self.status_lock:
-            self.blocking.clear()
+            for r in resources:
+                self.global_resource_list[r].release()
+            self.print("Clearing blocking list")
+            while len(self.blocking) > 0:
+                self.blocking.pop()
+        self.print("CS done")
 
     def grant(self, node):
         with self.status_lock:
             self.blocking.append(node)
         node.transmit(self.u.value, True)
 
-    def transmit(self, val, initial=False):
+    def transmit(self, val, initial=False, path=[]):
+        path.append(self.id_.value)
         with self.status_lock:
             if not initial:
                 # if this is not the initial transmission, we check if
@@ -177,10 +187,11 @@ class Node:
                 # and is being asked to retransmit by someone else in
                 # the network, thereby ensuring a cycle
                 if self.u.value == self.v.value and self.u.value == val:
-                    print("DEADLOCK")
-                    #for i in range(num_nodes):  # release all as no other requests can be granted
-                        #global_sema.release()
-                    sys.exit(1)
+                    self.print("DEADLOCK ->", path)
+                    for _ in range(self.num_nodes):
+                        self.global_sema.release()  # release all as no other requests can be granted
+                    return
+                    #sys.exit(1)
                 else:
                     self.u.value = val
             else:
@@ -190,10 +201,13 @@ class Node:
                 val = self.u.value
         # transmit to all nodes which are blocked by current node
         for node in self.blocking:
-            node.transmit(val)
+            node.transmit(val, False, path)
+        path.pop()
 
+    def __str__(self):
+        return "Node %2d" % self.id_.value
 
-def fire_node(nodes, num, max_req, global_sema):
+def fire_node(nodes, num, max_req):
     """
     Initiates the resource requests for each of the nodes
 
@@ -213,35 +227,37 @@ def fire_node(nodes, num, max_req, global_sema):
     None.
 
     """
-    nodes[num].fire(max_req, global_sema)
+    nodes[num].fire(max_req)
 
 
 def main():
-
+    if len(sys.argv) < 3:
+        print("Usage: %s <num_nodes> <num_resources>" % sys.argv[0])
+        return
     m = Manager()
-    global_sema = m.Semaphore(0)
+    global_sema = m.Semaphore()
     num_process = int(sys.argv[1])
     num_resource = int(sys.argv[2])
     #global_resource_list = m.list([0] * num_resource)
     #global_res_list_lock = m.Lock()
-    global_res_sems = m.list([Resource(m, i) for i in range(num_resource)])
+    global_resource_list = m.list([Resource(m, i) for i in range(num_resource)])
 
-    nodes = [Node(i, m, global_res_sems) for i in range(num_process)]
+    nodes = [Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)]
 
     # the nodes stop after this many total requests are made
-    max_req = num_process
+    max_req = num_process * 5
 
     # the worker pool
     # it contains one process for each of the node in the
     # network. each process gets assigned to perform the
     # free -> request -> cs loop for one node.
     jobPool = Pool(processes=len(nodes))
-    jobPool.starmap_async(fire_node, zip(repeat(nodes), range(len(nodes)), repeat(max_req), repeat(global_sema)))
+    jobPool.starmap_async(fire_node, zip(repeat(nodes), range(num_process), repeat(max_req)))
 
     for _ in range(num_process):
         global_sema.acquire()
 
-
+    jobPool.terminate()
 
 if __name__ == "__main__":
     main()
