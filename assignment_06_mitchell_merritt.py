@@ -96,7 +96,7 @@ class Resource:
 
 class Node:
 
-    def __init__(self, id_, num_nodes, manager, resource_list, global_sema):
+    def __init__(self, id_, num_nodes, manager, resource_list, global_sema, global_transmit_lock):
 
         self.id_ = manager.Value('i', id_)
         self.u = manager.Value('i', id_)
@@ -108,6 +108,7 @@ class Node:
         self.my_requests = 0
         self.num_resource = len(resource_list)
         self.num_nodes = num_nodes
+        self.global_transmit_lock = global_transmit_lock
 
     def fire(self, max_req):
         """
@@ -194,21 +195,24 @@ class Node:
         None.
 
         """
-        self.print("Starting CS")
+        self.print("Starting Execution")
         sleep(sleep_time)
-        self.print("CS Done")
+        #self.print("CS Done")
+        self.print("Execution done")
         with self.status_lock:
-            for r in resources:
-                self.global_resource_list[r].release()
             self.print("Clearing blocking list")
             while len(self.blocking) > 0:
                 self.blocking.pop()
-        self.print("Execution done")
+            for r in resources:
+                self.global_resource_list[r].release()
+
+        #self.print("Execution done")
 
     def grant(self, node):
         with self.status_lock:
             self.blocking.append(node)
-        node.transmit(self.u.value, True)
+        with self.global_transmit_lock:
+            node.transmit(self.u.value, True)
 
     def transmit(self, val, initial=False, path=[]):
         path.append(self.id_.value)
@@ -225,16 +229,20 @@ class Node:
                         self.global_sema.release()  # release all as no other requests can be granted
                     return
                     #sys.exit(1)
+                # applying transmit rule
                 else:
                     self.u.value = val
+            # apply block rule
             else:
                 # we are starting the transmission
                 self.u.value = max(self.u.value, val) + 1
                 self.v.value = self.u.value
                 val = self.u.value
         self.print("Transmitting [initial=", initial, "] u:", self.u.value, "v:", self.v.value)
+
         # transmit to all nodes which are blocked by current node
         for node in self.blocking:
+            #with self.global_transmit_lock:
             node.transmit(val, False, path)
         path.pop()
 
@@ -277,8 +285,9 @@ def main():
     #global_res_list_lock = m.Lock()
     nodes = m.list([])
     global_resource_list = m.list([Resource(m, i, nodes) for i in range(num_resource)])
+    global_transmit_lock = m.Lock()
 
-    nodes.extend([Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)])
+    nodes.extend([Node(i, num_process, m, global_resource_list, global_sema, global_transmit_lock) for i in range(num_process)])
 
     # the nodes stop after this many total requests are made
     max_req = num_process
@@ -288,7 +297,7 @@ def main():
     jobPool = Pool(processes=len(nodes))
     jobPool.starmap_async(fire_node, zip(repeat(nodes), range(num_process), repeat(max_req)))
 
-    for _ in range(num_process):
+    for _ in range(num_process+1):
         global_sema.acquire()
 
     jobPool.terminate()
