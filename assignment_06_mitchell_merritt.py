@@ -10,13 +10,27 @@ import random
 from itertools import repeat
 import sys
 
+import traceback, functools, multiprocessing
+
+def trace_unhandled_exceptions(func):
+    @functools.wraps(func)
+    def wrapped_func(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except:
+            print('Exception in '+func.__name__)
+            traceback.print_exc()
+    return wrapped_func
+
 class Resource:
 
-    def __init__(self, m, i):
+    def __init__(self, m, i, nodes=None):
         self.sem = m.Semaphore()
         self.id_ = m.Value('i', i)
         self.acquired_by = m.list([None]) # we create a shared list to store the node
         self.lock = m.Lock()
+        self.waiting = m.list([]) # nodes who are waiting for this resource on acquired_by
+        self.global_node_list = nodes
 
     def acquire(self, node):
         """
@@ -32,20 +46,32 @@ class Resource:
         None.
 
         """
-        node.print("Trying to acquire R" + str(self.id_.value),
-                   "[Currently acquired by " + str(self.acquired_by[0]) + "]")
         with self.lock:
+            node.print("Trying to acquire R" + str(self.id_.value),
+                   "[Currently acquired by " + str(self.acquired_by[0]) + "]")
             if self.acquired_by[0] == None:
                 self.acquired_by[0] = node
-                self.sem.release()
                 return
+            print("Adding", node, "to waiting")
+            self.waiting.append(node.id_.value)
         self.acquired_by[0].grant(node)
 
     def access(self, node):
+        node.print("Waiting to acquire R" + str(self.id_.value))
+        with self.lock:
+            if self.acquired_by[0].id_.value == node.id_.value:
+                node.print("Acquired R" + str(self.id_.value))
+                return
         self.sem.acquire()
         with self.lock:
+            print("Removing", node, "from waiting")
+            self.waiting.remove(node.id_.value)
             self.acquired_by[0] = node
             node.print("Acquired R" + str(self.id_.value))
+            # for all the nodes that are still waiting for this,
+            # make sure they are waiting on the new node
+            for n in self.waiting:
+                node.grant(self.global_node_list[n])
 
     def release(self):
         """
@@ -207,6 +233,7 @@ class Node:
     def __str__(self):
         return "Node %2d" % self.id_.value
 
+@trace_unhandled_exceptions
 def fire_node(nodes, num, max_req):
     """
     Initiates the resource requests for each of the nodes
@@ -242,7 +269,10 @@ def main():
     #global_res_list_lock = m.Lock()
     global_resource_list = m.list([Resource(m, i) for i in range(num_resource)])
 
-    nodes = [Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)]
+    nodes = m.list([Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)])
+
+    for r in global_resource_list:
+        r.global_node_list = nodes
 
     # the nodes stop after this many total requests are made
     max_req = num_process
