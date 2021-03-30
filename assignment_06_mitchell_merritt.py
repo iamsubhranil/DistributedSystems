@@ -27,7 +27,7 @@ class Resource:
     def __init__(self, m, i, nodes=None):
         self.sem = m.Semaphore()
         self.id_ = m.Value('i', i)
-        self.acquired_by = m.list([None]) # we create a shared list to store the node
+        self.acquired_by = m.Value('i', -1)
         self.lock = m.Lock()
         self.waiting = m.list([]) # nodes who are waiting for this resource on acquired_by
         self.global_node_list = nodes
@@ -48,25 +48,26 @@ class Resource:
         """
         with self.lock:
             node.print("Trying to acquire R" + str(self.id_.value),
-                   "[Currently acquired by " + str(self.acquired_by[0]) + "]")
-            if self.acquired_by[0] == None:
-                self.acquired_by[0] = node
-                return
-            print("Adding", node, "to waiting")
+                   "[Currently acquired by " + str(self.acquired_by.value) + "]")
+            if self.acquired_by.value == -1:
+                self.acquired_by.value = node.id_.value
+                return True
+            #print("Adding", node, "to waiting")
             self.waiting.append(node.id_.value)
-        self.acquired_by[0].grant(node)
+        self.global_node_list[self.acquired_by.value].grant(node)
+        return False
 
     def access(self, node):
         node.print("Waiting to acquire R" + str(self.id_.value))
         with self.lock:
-            if self.acquired_by[0].id_.value == node.id_.value:
+            if self.acquired_by.value == node.id_.value:
                 node.print("Acquired R" + str(self.id_.value))
                 return
         self.sem.acquire()
         with self.lock:
-            print("Removing", node, "from waiting")
+            #print("Removing", node, "from waiting")
             self.waiting.remove(node.id_.value)
-            self.acquired_by[0] = node
+            self.acquired_by.value = node.id_.value
             node.print("Acquired R" + str(self.id_.value))
             # for all the nodes that are still waiting for this,
             # make sure they are waiting on the new node
@@ -88,9 +89,9 @@ class Resource:
 
         """
         with self.lock:
-            #print("here", self.id_.value)
-            self.acquired_by[0].print("Released R" + str(self.id_.value))
-            self.acquired_by[0] = None
+            #print("here", self.id_.value, node)
+            self.global_node_list[self.acquired_by.value].print("Released R" + str(self.id_.value))
+            self.acquired_by.value = -1
             self.sem.release()
 
 class Node:
@@ -149,9 +150,13 @@ class Node:
         resources = random.sample(range(self.num_resource), num_res)  # which resources are required
         sleep_time = random.random() + random.random()
         self.print("Resource list generated:", resources)
+        call_later = []
         for res in resources:
-            self.global_resource_list[res].acquire(self)
-        for res in resources:
+            if self.global_resource_list[res].acquire(self):
+                self.global_resource_list[res].access(self)
+            else:
+                call_later.append(res)
+        for res in call_later:
             self.global_resource_list[res].access(self)
         # All resources accessed, now utilise
         self.execute(resources, sleep_time)
@@ -267,12 +272,10 @@ def main():
     num_resource = int(sys.argv[2])
     #global_resource_list = m.list([0] * num_resource)
     #global_res_list_lock = m.Lock()
-    global_resource_list = m.list([Resource(m, i) for i in range(num_resource)])
+    nodes = m.list([])
+    global_resource_list = m.list([Resource(m, i, nodes) for i in range(num_resource)])
 
-    nodes = m.list([Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)])
-
-    for r in global_resource_list:
-        r.global_node_list = nodes
+    nodes.extend([Node(i, num_process, m, global_resource_list, global_sema) for i in range(num_process)])
 
     # the nodes stop after this many total requests are made
     max_req = num_process
