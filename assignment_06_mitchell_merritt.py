@@ -99,8 +99,8 @@ class Node:
     def __init__(self, id_, num_nodes, manager, resource_list, global_sema):
 
         self.id_ = manager.Value('i', id_)
-        self.u = manager.Value('i', 0)
-        self.v = manager.Value('i', 0)
+        self.u = manager.Value('i', id_)
+        self.v = manager.Value('i', id_)
         self.blocking = manager.list()
         self.status_lock = manager.Lock()
         self.global_resource_list = resource_list
@@ -176,7 +176,7 @@ class Node:
         None.
 
         """
-        print("[Node %3d] " % self.id_.value, *args)
+        print("[Node %3d(%d/%d)] " % (self.id_.value, self.u.value, self.v.value), *args)
 
     def execute(self, resources, sleep_time):
         """
@@ -194,7 +194,9 @@ class Node:
         None.
 
         """
+        self.print("Starting CS")
         sleep(sleep_time)
+        self.print("CS Done")
         with self.status_lock:
             for r in resources:
                 self.global_resource_list[r].release()
@@ -230,13 +232,14 @@ class Node:
                 self.u.value = max(self.u.value, val) + 1
                 self.v.value = self.u.value
                 val = self.u.value
+        self.print("Transmitting [initial=", initial, "] u:", self.u.value, "v:", self.v.value)
         # transmit to all nodes which are blocked by current node
         for node in self.blocking:
             node.transmit(val, False, path)
         path.pop()
 
     def __str__(self):
-        return "Node %2d" % self.id_.value
+        return "Node %2d(%d/%d)" % (self.id_.value, self.u.value, self.v.value)
 
 @trace_unhandled_exceptions
 def fire_node(nodes, num, max_req):
